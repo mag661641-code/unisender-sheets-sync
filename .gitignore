@@ -1,0 +1,12 @@
+credentials.json
+accounts.json
+.streamlit/secrets.toml
+*.png
+tab_devices_*.txt
+page_text_*.txt
+check_*.png
+error.png
+__pycache__/
+*.pyc
+
+.streamlit/secrets.toml.example
