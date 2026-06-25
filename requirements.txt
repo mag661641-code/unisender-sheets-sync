@@ -1,0 +1,4 @@
+streamlit
+selenium
+gspread
+google-auth

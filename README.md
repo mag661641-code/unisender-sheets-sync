@@ -89,8 +89,8 @@ accounts.json
 [proxy]
 user     = "логин_прокси"
 password = "пароль_прокси"
-host     = ""
-port     = ""
+host     = "5.42.209.148"
+port     = "64328"
 
 [gcp_service_account]
 type                        = "service_account"

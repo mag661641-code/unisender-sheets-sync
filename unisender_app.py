@@ -97,8 +97,16 @@ def save_accounts(accounts):
 
 
 def get_service_email():
-    from parser_core import get_service_email as _get
-    return _get()
+    """Читает email сервисного аккаунта из Secrets или credentials.json."""
+    try:
+        return st.secrets["gcp_service_account"]["client_email"]
+    except Exception:
+        pass
+    try:
+        with open("credentials.json", encoding="utf-8") as f:
+            return json.load(f).get("client_email", "")
+    except Exception:
+        return ""
 
 
 def load_accounts_from_secrets():
@@ -258,9 +266,11 @@ if run:
     append("Запуск...")
 
     try:
-        from parser_core import run_parser
+        from parser_core import run_parser  # импортируем только здесь
         for msg in run_parser(account):
             append(msg)
         st.success("Готово")
     except Exception as e:
+        import traceback
         st.error(f"Ошибка: {e}")
+        st.code(traceback.format_exc())
