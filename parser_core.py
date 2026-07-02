@@ -43,49 +43,101 @@ def _setup_proxy():
     return user, pwd, host, str(port)
 
 
-def _make_proxy_auth_extension(user, pwd, host, port):
-    """Строит .zip-расширение Chrome, которое настраивает прокси
-    и отвечает на запрос авторизации — обычный --proxy-server
-    не поддерживает логин/пароль в headless-режиме."""
-    import zipfile
+def _start_local_proxy_relay(user, pwd, host, port):
+    """Поднимает локальный HTTP(S)-прокси без авторизации, который сам
+    добавляет Proxy-Authorization и перенаправляет трафик на внешний
+    прокси. Нужен, потому что Chrome не поддерживает логин/пароль
+    в --proxy-server, а расширения с Manifest V2 (chrome.webRequest
+    onAuthRequired) современные версии Chrome/Chromium больше не грузят.
+    Возвращает адрес локального прокси "127.0.0.1:PORT"."""
+    import asyncio
+    import base64
+    import socket
+    import threading
 
-    manifest = """
-    {
-      "version": "1.0.0",
-      "manifest_version": 2,
-      "name": "Proxy Auth",
-      "permissions": [
-        "proxy", "tabs", "unlimitedStorage", "storage",
-        "<all_urls>", "webRequest", "webRequestBlocking"
-      ],
-      "background": {"scripts": ["background.js"]},
-      "minimum_chrome_version": "22.0.0"
-    }
-    """
+    upstream_host = host
+    upstream_port = int(port)
+    auth_header = base64.b64encode(f"{user}:{pwd}".encode()).decode()
 
-    background = f"""
-    var config = {{
-        mode: "fixed_servers",
-        rules: {{
-          singleProxy: {{ scheme: "http", host: "{host}", port: parseInt({port}) }},
-          bypassList: ["localhost", "127.0.0.1"]
-        }}
-    }};
-    chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
-    chrome.webRequest.onAuthRequired.addListener(
-        function(details) {{
-            return {{authCredentials: {{username: "{user}", password: "{pwd}"}}}};
-        }},
-        {{urls: ["<all_urls>"]}},
-        ["blocking"]
-    );
-    """
+    async def _pipe(reader, writer):
+        try:
+            while True:
+                data = await reader.read(65536)
+                if not data:
+                    break
+                writer.write(data)
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError, asyncio.IncompleteReadError):
+            pass
+        finally:
+            writer.close()
 
-    ext_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_proxy_auth_ext.zip")
-    with zipfile.ZipFile(ext_path, "w") as zp:
-        zp.writestr("manifest.json", manifest)
-        zp.writestr("background.js", background)
-    return ext_path
+    async def _handle(client_reader, client_writer):
+        try:
+            request_line = await client_reader.readline()
+            if not request_line:
+                client_writer.close()
+                return
+            headers = []
+            while True:
+                line = await client_reader.readline()
+                if line in (b"\r\n", b""):
+                    break
+                headers.append(line)
+
+            upstream_reader, upstream_writer = await asyncio.open_connection(
+                upstream_host, upstream_port
+            )
+
+            method = request_line.split(b" ", 1)[0]
+            if method == b"CONNECT":
+                upstream_writer.write(request_line)
+                for h in headers:
+                    upstream_writer.write(h)
+                upstream_writer.write(f"Proxy-Authorization: Basic {auth_header}\r\n".encode())
+                upstream_writer.write(b"\r\n")
+                await upstream_writer.drain()
+
+                resp = await upstream_reader.readuntil(b"\r\n\r\n")
+                client_writer.write(resp)
+                await client_writer.drain()
+            else:
+                upstream_writer.write(request_line)
+                for h in headers:
+                    upstream_writer.write(h)
+                upstream_writer.write(f"Proxy-Authorization: Basic {auth_header}\r\n".encode())
+                upstream_writer.write(b"\r\n")
+                await upstream_writer.drain()
+
+            await asyncio.gather(
+                _pipe(client_reader, upstream_writer),
+                _pipe(upstream_reader, client_writer),
+            )
+        except Exception:
+            try:
+                client_writer.close()
+            except Exception:
+                pass
+
+    def _run_server(ready_event, port_holder):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        async def _main():
+            server = await asyncio.start_server(_handle, "127.0.0.1", 0)
+            port_holder.append(server.sockets[0].getsockname()[1])
+            ready_event.set()
+            async with server:
+                await server.serve_forever()
+
+        loop.run_until_complete(_main())
+
+    ready = threading.Event()
+    port_holder = []
+    t = threading.Thread(target=_run_server, args=(ready, port_holder), daemon=True)
+    t.start()
+    ready.wait(timeout=5)
+    return f"127.0.0.1:{port_holder[0]}"
 
 
 def _get_google_creds(scopes):
@@ -267,7 +319,8 @@ def make_driver(proxy=None):
 
     if proxy:
         user, pwd, host, port = proxy
-        options.add_extension(_make_proxy_auth_extension(user, pwd, host, port))
+        local_proxy_addr = _start_local_proxy_relay(user, pwd, host, port)
+        options.add_argument(f"--proxy-server=http://{local_proxy_addr}")
 
     if os.path.exists(chromium_bin):
         options.binary_location = chromium_bin
