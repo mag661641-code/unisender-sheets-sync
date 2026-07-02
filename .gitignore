@@ -9,5 +9,6 @@ error.png
 __pycache__/
 *.pyc
 _proxy_auth_ext.zip
+.claude/settings.local.json
 
 .streamlit/secrets.toml.example
