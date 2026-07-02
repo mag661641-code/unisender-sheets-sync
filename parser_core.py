@@ -390,6 +390,8 @@ def login(driver, email, password):
 
 
 def get_all_campaigns(driver):
+    """Генератор: yield-ит диагностические строки, в конце yield-ит
+    финальный результат как {"result": dict}."""
     driver.get("https://app.unisender.com/ru/v5/spa/campaigns")
     time.sleep(5)
 
@@ -398,10 +400,14 @@ def get_all_campaigns(driver):
 
     while True:
         try:
-            WebDriverWait(driver, 10).until(
+            WebDriverWait(driver, 20).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/campaigns/']"))
             )
-        except:
+        except Exception:
+            if page == 1:
+                yield f"   Текущий URL: {driver.current_url}"
+                yield f"   Заголовок страницы: {driver.title!r}"
+                yield f"   Начало HTML: {driver.page_source[:500]!r}"
             break
 
         for card_link in driver.find_elements(By.CSS_SELECTOR, "a[href*='/campaigns/']"):
@@ -452,7 +458,7 @@ def get_all_campaigns(driver):
         except:
             break
 
-    return result
+    yield {"result": result}
 
 
 def parse_campaign_page(driver, url, subject):
@@ -648,7 +654,12 @@ def run_parser(account):
             yield msg
 
         yield "\nЗагружаю список рассылок из Unisender..."
-        campaigns = get_all_campaigns(driver)
+        campaigns = {}
+        for msg in get_all_campaigns(driver):
+            if isinstance(msg, dict):
+                campaigns = msg["result"]
+            else:
+                yield msg
         yield f"   Найдено кампаний: {len(campaigns)}"
 
         for item in pending:
