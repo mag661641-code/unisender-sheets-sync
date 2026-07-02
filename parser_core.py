@@ -305,6 +305,9 @@ def make_driver(proxy=None):
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
     options.set_capability("goog:loggingPrefs", {"browser": "ALL"})
+    options.add_experimental_option(
+        "prefs", {"profile.managed_default_content_settings.images": 2}
+    )
     # На Streamlit Cloud (и любом сервере без дисплея) Chrome запускается headless
     chromium_bin = "/usr/bin/chromium"
     chromedriver_bin = "/usr/bin/chromedriver"
@@ -331,19 +334,6 @@ def make_driver(proxy=None):
 
 def login(driver, email, password):
     driver.get("https://app.unisender.com/ru/v5/spa/login")
-
-    # Ждём и периодически проверяем, появляется ли вообще какой-то контент —
-    # это отличает "страница не грузится совсем" от "грузится, но медленно"
-    body_len = 0
-    for _ in range(20):
-        time.sleep(1)
-        try:
-            body_len = len(driver.execute_script("return document.body.innerHTML") or "")
-        except Exception:
-            body_len = -1
-        if body_len > 50:
-            break
-    yield f"   document.body длина через ожидание: {body_len}"
 
     wait = WebDriverWait(driver, 20)
     try:
@@ -393,7 +383,6 @@ def get_all_campaigns(driver):
     """Генератор: yield-ит диагностические строки, в конце yield-ит
     финальный результат как {"result": dict}."""
     driver.get("https://app.unisender.com/ru/v5/spa/campaigns")
-    time.sleep(5)
 
     result = {}
     page   = 1
