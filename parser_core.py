@@ -484,6 +484,10 @@ def get_all_campaigns(driver):
         except:
             break
 
+    yield f"   Всего собрано пар (тема, сегмент): {len(result)}"
+    for (subj, seg) in list(result.keys())[:25]:
+        yield f"      найдено: {subj[:55]!r} | {seg!r}"
+
     yield {"result": result}
 
 
@@ -666,6 +670,7 @@ def run_parser(account):
     yield f"Найдено строк для заполнения: {len(pending)}"
     for p in pending:
         yield f"   [{p['row_num']}] {p['date']} | {p['segment']:<12} | {p['subject'][:45]}"
+        yield f"        точный текст: {p['subject'][:55]!r} | {p['segment']!r}"
 
     # Selenium
     yield "\nОткрываю браузер..."
