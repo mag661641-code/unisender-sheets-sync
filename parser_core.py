@@ -205,15 +205,19 @@ def make_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    # На Streamlit Cloud Chrome запускается headless
-    if os.environ.get("STREAMLIT_CLOUD") or not os.environ.get("DISPLAY", True):
+    # На Streamlit Cloud (и любом сервере без дисплея) Chrome запускается headless
+    chromium_bin = "/usr/bin/chromium"
+    chromedriver_bin = "/usr/bin/chromedriver"
+    headless = os.environ.get("STREAMLIT_CLOUD") or not os.environ.get("DISPLAY") or os.path.exists(chromium_bin)
+    if headless:
         options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        options.add_argument("--disable-setuid-sandbox")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--window-size=1920,1080")
 
-    chromium_bin = "/usr/bin/chromium"
-    chromedriver_bin = "/usr/bin/chromedriver"
     if os.path.exists(chromium_bin):
         options.binary_location = chromium_bin
     if os.path.exists(chromedriver_bin):
