@@ -1,6 +1,2 @@
 chromium
 chromium-driver
-fonts-liberation
-libnss3
-libgbm1
-libasound2
