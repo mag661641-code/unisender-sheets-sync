@@ -6,6 +6,7 @@ run_parser(account)  генератор, выдаёт строки лога.
 """
 
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -210,6 +211,13 @@ def make_driver():
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+
+    chromium_bin = "/usr/bin/chromium"
+    chromedriver_bin = "/usr/bin/chromedriver"
+    if os.path.exists(chromium_bin):
+        options.binary_location = chromium_bin
+    if os.path.exists(chromedriver_bin):
+        return webdriver.Chrome(service=Service(chromedriver_bin), options=options)
     return webdriver.Chrome(options=options)
 
 
