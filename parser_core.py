@@ -565,7 +565,7 @@ def run_parser(account):
 
     # Selenium
     yield "\nОткрываю браузер..."
-    driver = make_driver(proxy=proxy)
+    driver = make_driver(proxy=None)  # временно без прокси — диагностика
 
     filled    = 0
     not_found = []
