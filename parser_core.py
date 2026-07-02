@@ -410,16 +410,22 @@ def get_all_campaigns(driver):
                 yield f"   Начало HTML: {driver.page_source[:500]!r}"
             break
 
-        for card_link in driver.find_elements(By.CSS_SELECTOR, "a[href*='/campaigns/']"):
+        links = driver.find_elements(By.CSS_SELECTOR, "a[href*='/campaigns/']")
+        stats = {"links": len(links), "matched_id": 0, "has_subject": 0,
+                 "has_wrapper": 0, "has_segment": 0}
+
+        for card_link in links:
             try:
                 url = card_link.get_attribute("href") or ""
                 if not re.search(r"/campaigns/\d+", url):
                     continue
+                stats["matched_id"] += 1
                 url = re.sub(r"\?.*$", "", url)
 
                 subject = card_link.text.strip()
                 if not subject:
                     continue
+                stats["has_subject"] += 1
 
                 wrapper_lines = []
                 for levels_up in ["..", "../..", "../../..", "../../../.."]:
@@ -431,6 +437,8 @@ def get_all_campaigns(driver):
                             break
                     except:
                         continue
+                if wrapper_lines:
+                    stats["has_wrapper"] += 1
 
                 segment_ru = ""
                 for line in wrapper_lines:
@@ -440,12 +448,25 @@ def get_all_campaigns(driver):
                             break
                     if segment_ru:
                         break
+                if segment_ru:
+                    stats["has_segment"] += 1
 
                 if subject and segment_ru:
                     result[(subject, segment_ru)] = url
 
             except:
                 continue
+
+        if page == 1:
+            yield (f"   Диагностика стр.1: ссылок={stats['links']}, "
+                   f"с ID кампании={stats['matched_id']}, с темой={stats['has_subject']}, "
+                   f"с блоком времени={stats['has_wrapper']}, с сегментом={stats['has_segment']}")
+            if stats["links"] and not stats["has_wrapper"]:
+                try:
+                    sample = links[0].find_element(By.XPATH, "../../..").text
+                    yield f"   Пример текста обёртки (3 уровня вверх): {sample[:300]!r}"
+                except Exception as ex:
+                    yield f"   Не удалось получить пример обёртки: {ex}"
 
         try:
             nb = driver.find_element(
