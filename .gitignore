@@ -8,5 +8,6 @@ check_*.png
 error.png
 __pycache__/
 *.pyc
+_proxy_auth_ext.zip
 
 .streamlit/secrets.toml.example

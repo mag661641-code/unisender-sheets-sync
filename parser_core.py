@@ -21,7 +21,8 @@ GOOGLE_JSON = "credentials.json"
 
 
 def _setup_proxy():
-    """Читает прокси из Streamlit Secrets или из локальных констант."""
+    """Читает прокси из Streamlit Secrets или из локальных констант.
+    Возвращает (user, pwd, host, port) для передачи в make_driver()."""
     try:
         import streamlit as st
         p = st.secrets["proxy"]
@@ -39,6 +40,52 @@ def _setup_proxy():
     os.environ["https_proxy"] = proxy
     os.environ["NO_PROXY"]    = "localhost,127.0.0.1"
     os.environ["no_proxy"]    = "localhost,127.0.0.1"
+    return user, pwd, host, str(port)
+
+
+def _make_proxy_auth_extension(user, pwd, host, port):
+    """Строит .zip-расширение Chrome, которое настраивает прокси
+    и отвечает на запрос авторизации — обычный --proxy-server
+    не поддерживает логин/пароль в headless-режиме."""
+    import zipfile
+
+    manifest = """
+    {
+      "version": "1.0.0",
+      "manifest_version": 2,
+      "name": "Proxy Auth",
+      "permissions": [
+        "proxy", "tabs", "unlimitedStorage", "storage",
+        "<all_urls>", "webRequest", "webRequestBlocking"
+      ],
+      "background": {"scripts": ["background.js"]},
+      "minimum_chrome_version": "22.0.0"
+    }
+    """
+
+    background = f"""
+    var config = {{
+        mode: "fixed_servers",
+        rules: {{
+          singleProxy: {{ scheme: "http", host: "{host}", port: parseInt({port}) }},
+          bypassList: ["localhost", "127.0.0.1"]
+        }}
+    }};
+    chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
+    chrome.webRequest.onAuthRequired.addListener(
+        function(details) {{
+            return {{authCredentials: {{username: "{user}", password: "{pwd}"}}}};
+        }},
+        {{urls: ["<all_urls>"]}},
+        ["blocking"]
+    );
+    """
+
+    ext_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_proxy_auth_ext.zip")
+    with zipfile.ZipFile(ext_path, "w") as zp:
+        zp.writestr("manifest.json", manifest)
+        zp.writestr("background.js", background)
+    return ext_path
 
 
 def _get_google_creds(scopes):
@@ -200,7 +247,7 @@ def validate_stats(stats):
 
 #  Selenium 
 
-def make_driver():
+def make_driver(proxy=None):
     options = webdriver.ChromeOptions()
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
@@ -215,8 +262,11 @@ def make_driver():
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--disable-setuid-sandbox")
-        options.add_argument("--disable-extensions")
         options.add_argument("--window-size=1920,1080")
+
+    if proxy:
+        user, pwd, host, port = proxy
+        options.add_extension(_make_proxy_auth_extension(user, pwd, host, port))
 
     if os.path.exists(chromium_bin):
         options.binary_location = chromium_bin
@@ -467,7 +517,7 @@ def run_parser(account):
         cols = {k: chr(ord(sc) + i) for i, k in enumerate(DEFAULT_COLS.keys())}
     g_col = (cols or DEFAULT_COLS).get("sent", "G")
 
-    _setup_proxy()
+    proxy = _setup_proxy()
 
     # Google Sheets
     yield "Подключаюсь к Google Sheets..."
@@ -509,7 +559,10 @@ def run_parser(account):
 
     # Selenium
     yield "\nОткрываю браузер..."
-    driver = make_driver()
+    driver = make_driver(proxy=proxy)
+
+    filled    = 0
+    not_found = []
 
     try:
         yield "Вхожу в Unisender..."
@@ -519,9 +572,6 @@ def run_parser(account):
         yield "\nЗагружаю список рассылок из Unisender..."
         campaigns = get_all_campaigns(driver)
         yield f"   Найдено кампаний: {len(campaigns)}"
-
-        filled    = 0
-        not_found = []
 
         for item in pending:
             subject  = item["subject"]
