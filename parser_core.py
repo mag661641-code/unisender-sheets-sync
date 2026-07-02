@@ -279,10 +279,16 @@ def login(driver, email, password):
     driver.get("https://app.unisender.com/ru/v5/spa/login")
     time.sleep(3)
 
-    wait = WebDriverWait(driver, 20)
-    ef = wait.until(EC.presence_of_element_located(
-        (By.CSS_SELECTOR, "input[placeholder='Введите email']")
-    ))
+    wait = WebDriverWait(driver, 40)
+    try:
+        ef = wait.until(EC.presence_of_element_located(
+            (By.CSS_SELECTOR, "input[placeholder='Введите email']")
+        ))
+    except Exception:
+        yield f"   Текущий URL: {driver.current_url}"
+        yield f"   Заголовок страницы: {driver.title!r}"
+        yield f"   Начало HTML: {driver.page_source[:500]!r}"
+        raise
     ef.clear()
     ef.send_keys(email)
     time.sleep(0.5)
