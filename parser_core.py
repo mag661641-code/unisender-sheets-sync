@@ -657,11 +657,11 @@ def run_parser(account):
     pending = []
     for i, row in enumerate(rows[1:], start=2):
         a = row[0].strip() if len(row) > 0 else ""
-        c = row[2].strip() if len(row) > 2 else ""
+        b = row[1].strip() if len(row) > 1 else ""  # страна — сопоставляется с сегментом кампании в Unisender
         d = row[3].strip() if len(row) > 3 else ""
         g = row[g_idx].strip() if len(row) > g_idx else ""
-        if a and c and d and not g:
-            pending.append({"row_num": i, "date": a, "segment": c, "subject": d})
+        if a and b and d and not g:
+            pending.append({"row_num": i, "date": a, "segment": b, "subject": d})
 
     if not pending:
         yield "Нечего заполнять — все строки уже заполнены!"
