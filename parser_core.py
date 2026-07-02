@@ -399,10 +399,15 @@ def get_all_campaigns(driver):
     page   = 1
 
     while True:
+        def _has_campaign_link(d):
+            for el in d.find_elements(By.CSS_SELECTOR, "a[href*='/campaigns/']"):
+                href = el.get_attribute("href") or ""
+                if re.search(r"/campaigns/\d+", href):
+                    return True
+            return False
+
         try:
-            WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/campaigns/']"))
-            )
+            WebDriverWait(driver, 25).until(_has_campaign_link)
         except Exception:
             if page == 1:
                 yield f"   Текущий URL: {driver.current_url}"
