@@ -252,6 +252,7 @@ def make_driver(proxy=None):
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
+    options.set_capability("goog:loggingPrefs", {"browser": "ALL"})
     # На Streamlit Cloud (и любом сервере без дисплея) Chrome запускается headless
     chromium_bin = "/usr/bin/chromium"
     chromedriver_bin = "/usr/bin/chromedriver"
@@ -277,9 +278,21 @@ def make_driver(proxy=None):
 
 def login(driver, email, password):
     driver.get("https://app.unisender.com/ru/v5/spa/login")
-    time.sleep(3)
 
-    wait = WebDriverWait(driver, 40)
+    # Ждём и периодически проверяем, появляется ли вообще какой-то контент —
+    # это отличает "страница не грузится совсем" от "грузится, но медленно"
+    body_len = 0
+    for _ in range(20):
+        time.sleep(1)
+        try:
+            body_len = len(driver.execute_script("return document.body.innerHTML") or "")
+        except Exception:
+            body_len = -1
+        if body_len > 50:
+            break
+    yield f"   document.body длина через ожидание: {body_len}"
+
+    wait = WebDriverWait(driver, 20)
     try:
         ef = wait.until(EC.presence_of_element_located(
             (By.CSS_SELECTOR, "input[placeholder='Введите email']")
@@ -288,6 +301,12 @@ def login(driver, email, password):
         yield f"   Текущий URL: {driver.current_url}"
         yield f"   Заголовок страницы: {driver.title!r}"
         yield f"   Начало HTML: {driver.page_source[:500]!r}"
+        try:
+            logs = driver.get_log("browser")
+            for entry in logs[:20]:
+                yield f"   [console] {entry.get('level')}: {entry.get('message')}"
+        except Exception as log_err:
+            yield f"   (лог консоли недоступен: {log_err})"
         raise
     ef.clear()
     ef.send_keys(email)
