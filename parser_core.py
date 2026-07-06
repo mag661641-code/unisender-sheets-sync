@@ -344,9 +344,24 @@ def make_driver(proxy=None):
         options.add_argument("--window-size=1920,1080")
 
     if proxy:
+        import base64
         user, pwd, host, port = proxy
         local_proxy_addr = _start_local_proxy_relay(user, pwd, host, port)
-        options.add_argument(f"--proxy-server=http://{local_proxy_addr}")
+        # Через прокси пускаем только unisender.com (нужен российский IP для
+        # входа), остальной трафик (аналитика, CDN, Google и т.п.) идёт
+        # напрямую — так быстрее и не зависит от стабильности резидентского
+        # прокси на посторонних доменах, что раньше срывало монтирование
+        # SPA-приложения Unisender по таймауту (single-spa error #31).
+        pac_script = (
+            "function FindProxyForURL(url, host) {"
+            f"  if (dnsDomainIs(host, 'unisender.com') || shExpMatch(host, '*.unisender.com')) {{"
+            f"    return 'PROXY {local_proxy_addr}';"
+            "  }"
+            "  return 'DIRECT';"
+            "}"
+        )
+        pac_b64 = base64.b64encode(pac_script.encode()).decode()
+        options.add_argument(f"--proxy-pac-url=data:application/x-ns-proxy-autoconfig;base64,{pac_b64}")
 
     if os.path.exists(chromium_bin):
         options.binary_location = chromium_bin
