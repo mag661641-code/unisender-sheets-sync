@@ -7,6 +7,7 @@ run_parser(account)  генератор, выдаёт строки лога.
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.firefox.service import Service as FirefoxService
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -355,6 +356,36 @@ def make_driver(proxy=None):
     return webdriver.Chrome(options=options)
 
 
+def make_firefox_driver(proxy=None):
+    """Запасной вариант, если Chrome не может стартовать (например,
+    контейнеру не хватает памяти для Chrome, но хватает для Firefox)."""
+    options = webdriver.FirefoxOptions()
+    firefox_bin      = "/usr/bin/firefox-esr" if os.path.exists("/usr/bin/firefox-esr") else "/usr/bin/firefox"
+    geckodriver_bin  = "/usr/bin/geckodriver"
+
+    headless = os.environ.get("STREAMLIT_CLOUD") or not os.environ.get("DISPLAY") or os.path.exists(firefox_bin)
+    if headless:
+        options.add_argument("--headless")
+    options.set_preference("permissions.default.image", 2)
+
+    if proxy:
+        user, pwd, host, port = proxy
+        local_proxy_addr = _start_local_proxy_relay(user, pwd, host, port)
+        relay_host, relay_port = local_proxy_addr.split(":")
+        options.set_preference("network.proxy.type", 1)
+        options.set_preference("network.proxy.http", relay_host)
+        options.set_preference("network.proxy.http_port", int(relay_port))
+        options.set_preference("network.proxy.ssl", relay_host)
+        options.set_preference("network.proxy.ssl_port", int(relay_port))
+        options.set_preference("network.proxy.no_proxies_on", "localhost,127.0.0.1")
+
+    if os.path.exists(firefox_bin):
+        options.binary_location = firefox_bin
+    if os.path.exists(geckodriver_bin):
+        return webdriver.Firefox(service=FirefoxService(geckodriver_bin), options=options)
+    return webdriver.Firefox(options=options)
+
+
 def login(driver, email, password):
     driver.get("https://app.unisender.com/ru/v5/spa/login")
 
@@ -699,20 +730,24 @@ def run_parser(account):
     # из-за чего новый Chrome падает с "session not created: Chrome instance exited".
     try:
         import subprocess
-        subprocess.run(["pkill", "-9", "-f", "chromedriver"], check=False,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        subprocess.run(["pkill", "-9", "-f", "chrome.*--headless"], check=False,
-                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for pattern in ["chromedriver", "chrome.*--headless", "geckodriver", "firefox.*headless"]:
+            subprocess.run(["pkill", "-9", "-f", pattern], check=False,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
     # Selenium
+    # Первые попытки — Chrome; если он не может стартовать в принципе
+    # (не хватает памяти на этом контейнере и т.п.), последняя попытка —
+    # Firefox, у которого другой профиль потребления ресурсов.
     driver = None
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
-        yield f"\nОткрываю браузер... (попытка {attempt}/{max_attempts})"
+        use_firefox = (attempt == max_attempts)
+        browser_name = "Firefox" if use_firefox else "Chrome"
+        yield f"\nОткрываю браузер {browser_name}... (попытка {attempt}/{max_attempts})"
         try:
-            driver = make_driver(proxy=proxy)
+            driver = make_firefox_driver(proxy=proxy) if use_firefox else make_driver(proxy=proxy)
             yield "Вхожу в Unisender..."
             for msg in login(driver, email, password):
                 yield msg
