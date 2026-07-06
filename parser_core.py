@@ -356,12 +356,35 @@ def make_driver(proxy=None):
     return webdriver.Chrome(options=options)
 
 
+def _ensure_geckodriver():
+    """Debian/apt не поставляет geckodriver отдельным пакетом, поэтому
+    при первом запуске скачиваем бинарник с GitHub releases в /tmp."""
+    cached = "/tmp/geckodriver"
+    if os.path.exists(cached):
+        return cached
+    if os.path.exists("/usr/bin/geckodriver"):
+        return "/usr/bin/geckodriver"
+    try:
+        import urllib.request
+        import tarfile
+        import io
+        url = "https://github.com/mozilla/geckodriver/releases/download/v0.35.0/geckodriver-v0.35.0-linux64.tar.gz"
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            data = resp.read()
+        with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+            tar.extract("geckodriver", path="/tmp")
+        os.chmod(cached, 0o755)
+        return cached
+    except Exception:
+        return None
+
+
 def make_firefox_driver(proxy=None):
     """Запасной вариант, если Chrome не может стартовать (например,
     контейнеру не хватает памяти для Chrome, но хватает для Firefox)."""
     options = webdriver.FirefoxOptions()
     firefox_bin      = "/usr/bin/firefox-esr" if os.path.exists("/usr/bin/firefox-esr") else "/usr/bin/firefox"
-    geckodriver_bin  = "/usr/bin/geckodriver"
+    geckodriver_bin  = _ensure_geckodriver()
 
     headless = os.environ.get("STREAMLIT_CLOUD") or not os.environ.get("DISPLAY") or os.path.exists(firefox_bin)
     if headless:
@@ -381,7 +404,7 @@ def make_firefox_driver(proxy=None):
 
     if os.path.exists(firefox_bin):
         options.binary_location = firefox_bin
-    if os.path.exists(geckodriver_bin):
+    if geckodriver_bin and os.path.exists(geckodriver_bin):
         return webdriver.Firefox(service=FirefoxService(geckodriver_bin), options=options)
     return webdriver.Firefox(options=options)
 
