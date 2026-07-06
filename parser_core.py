@@ -344,24 +344,9 @@ def make_driver(proxy=None):
         options.add_argument("--window-size=1920,1080")
 
     if proxy:
-        import base64
         user, pwd, host, port = proxy
         local_proxy_addr = _start_local_proxy_relay(user, pwd, host, port)
-        # Через прокси пускаем только unisender.com (нужен российский IP для
-        # входа), остальной трафик (аналитика, CDN, Google и т.п.) идёт
-        # напрямую — так быстрее и не зависит от стабильности резидентского
-        # прокси на посторонних доменах, что раньше срывало монтирование
-        # SPA-приложения Unisender по таймауту (single-spa error #31).
-        pac_script = (
-            "function FindProxyForURL(url, host) {"
-            f"  if (dnsDomainIs(host, 'unisender.com') || shExpMatch(host, '*.unisender.com')) {{"
-            f"    return 'PROXY {local_proxy_addr}';"
-            "  }"
-            "  return 'DIRECT';"
-            "}"
-        )
-        pac_b64 = base64.b64encode(pac_script.encode()).decode()
-        options.add_argument(f"--proxy-pac-url=data:application/x-ns-proxy-autoconfig;base64,{pac_b64}")
+        options.add_argument(f"--proxy-server=http://{local_proxy_addr}")
 
     if os.path.exists(chromium_bin):
         options.binary_location = chromium_bin
@@ -373,22 +358,32 @@ def make_driver(proxy=None):
 def login(driver, email, password):
     driver.get("https://app.unisender.com/ru/v5/spa/login")
 
-    wait = WebDriverWait(driver, 20)
-    try:
-        ef = wait.until(EC.presence_of_element_located(
-            (By.CSS_SELECTOR, "input[placeholder='Введите email']")
-        ))
-    except Exception:
-        yield f"   Текущий URL: {driver.current_url}"
-        yield f"   Заголовок страницы: {driver.title!r}"
-        yield f"   Начало HTML: {driver.page_source[:500]!r}"
+    ef = None
+    for reload_attempt in range(2):
+        wait = WebDriverWait(driver, 20)
         try:
-            logs = driver.get_log("browser")
-            for entry in logs[:20]:
-                yield f"   [console] {entry.get('level')}: {entry.get('message')}"
-        except Exception as log_err:
-            yield f"   (лог консоли недоступен: {log_err})"
-        raise
+            ef = wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "input[placeholder='Введите email']")
+            ))
+            break
+        except Exception:
+            yield f"   Текущий URL: {driver.current_url}"
+            yield f"   Заголовок страницы: {driver.title!r}"
+            yield f"   Начало HTML: {driver.page_source[:500]!r}"
+            try:
+                logs = driver.get_log("browser")
+                for entry in logs[:20]:
+                    yield f"   [console] {entry.get('level')}: {entry.get('message')}"
+            except Exception as log_err:
+                yield f"   (лог консоли недоступен: {log_err})"
+            if reload_attempt == 1:
+                raise
+            # Первая загрузка часто не укладывается в 5с таймаут монтирования
+            # SPA из-за задержек прокси; при перезагрузке ассеты уже в кэше
+            # браузера и монтирование обычно укладывается в таймаут.
+            yield "   Перезагружаю страницу входа (кэш уже тёплый)..."
+            driver.get("https://app.unisender.com/ru/v5/spa/login")
+    assert ef is not None
     ef.clear()
     ef.send_keys(email)
     time.sleep(0.5)
