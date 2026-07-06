@@ -694,23 +694,36 @@ def run_parser(account):
         yield f"   [{p['row_num']}] {p['date']} | {p['segment']:<12} | {p['subject'][:45]}"
         yield f"        точный текст: {p['subject'][:55]!r} | {p['segment']!r}"
 
+    # Убиваем зависшие chrome/chromedriver от предыдущих неудачных запусков —
+    # на маленьком контейнере Streamlit Cloud они копятся и съедают память,
+    # из-за чего новый Chrome падает с "session not created: Chrome instance exited".
+    try:
+        import subprocess
+        subprocess.run(["pkill", "-9", "-f", "chromedriver"], check=False,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run(["pkill", "-9", "-f", "chrome.*--headless"], check=False,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
     # Selenium
     driver = None
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         yield f"\nОткрываю браузер... (попытка {attempt}/{max_attempts})"
-        driver = make_driver(proxy=proxy)
         try:
+            driver = make_driver(proxy=proxy)
             yield "Вхожу в Unisender..."
             for msg in login(driver, email, password):
                 yield msg
             break
         except Exception as e:
             yield f"   Сбой при входе (вероятно, проблема с прокси/сетью): {e!r}"
-            try:
-                driver.quit()
-            except Exception:
-                pass
+            if driver is not None:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
             driver = None
             if attempt == max_attempts:
                 raise RuntimeError(
