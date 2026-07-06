@@ -1,4 +1,4 @@
-﻿"""
+"""
 Ядро парсера Unisender -> Google Sheets.
 Используется и из app.py (Streamlit) и напрямую из unisender_parser.py.
 
@@ -85,9 +85,32 @@ def _start_local_proxy_relay(user, pwd, host, port):
                     break
                 headers.append(line)
 
-            upstream_reader, upstream_writer = await asyncio.open_connection(
-                upstream_host, upstream_port
-            )
+            upstream_reader = upstream_writer = None
+            last_err = None
+            for attempt in range(3):
+                try:
+                    upstream_reader, upstream_writer = await asyncio.wait_for(
+                        asyncio.open_connection(upstream_host, upstream_port),
+                        timeout=10,
+                    )
+                    break
+                except Exception as e:
+                    last_err = e
+                    await asyncio.sleep(0.5 * (attempt + 1))
+            if upstream_writer is None:
+                # Апстрим-прокси недоступен после нескольких попыток —
+                # отвечаем клиенту явной ошибкой вместо тихого обрыва,
+                # чтобы Chrome не завис в ожидании и корректно считал
+                # ресурс недоступным.
+                try:
+                    client_writer.write(
+                        b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n"
+                    )
+                    await client_writer.drain()
+                except Exception:
+                    pass
+                client_writer.close()
+                return
 
             method = request_line.split(b" ", 1)[0]
             if method == b"CONNECT":
@@ -662,17 +685,35 @@ def run_parser(account):
         yield f"        точный текст: {p['subject'][:55]!r} | {p['segment']!r}"
 
     # Selenium
-    yield "\nОткрываю браузер..."
-    driver = make_driver(proxy=proxy)
+    driver = None
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        yield f"\nОткрываю браузер... (попытка {attempt}/{max_attempts})"
+        driver = make_driver(proxy=proxy)
+        try:
+            yield "Вхожу в Unisender..."
+            for msg in login(driver, email, password):
+                yield msg
+            break
+        except Exception as e:
+            yield f"   Сбой при входе (вероятно, проблема с прокси/сетью): {e!r}"
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            driver = None
+            if attempt == max_attempts:
+                raise RuntimeError(
+                    "Не удалось войти в Unisender после нескольких попыток. "
+                    "Похоже, прокси нестабилен на этой сети — попробуйте ещё раз "
+                    "чуть позже или запустите без прокси."
+                ) from e
+            time.sleep(3)
 
     filled    = 0
     not_found = []
 
     try:
-        yield "Вхожу в Unisender..."
-        for msg in login(driver, email, password):
-            yield msg
-
         yield "\nЗагружаю список рассылок из Unisender..."
         campaigns = {}
         for msg in get_all_campaigns(driver):
