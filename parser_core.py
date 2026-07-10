@@ -195,10 +195,11 @@ LIST_TO_SEGMENT = {
     "ТашкентСМУ":  "Узбекистан",
     "Азербайджан": "Азербайджан",
     "Армения":     "Армения",
+    "Кыргызстан":  "Кыргызстан",
 }
 LIST_NAMES_BY_LEN = sorted(LIST_TO_SEGMENT.keys(), key=len, reverse=True)
 DAYS_RU       = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
-COUNTRY_ORDER = ["Россия", "Казахстан", "Беларусь", "Узбекистан", "Азербайджан", "Армения"]
+COUNTRY_ORDER = ["Россия", "Казахстан", "Беларусь", "Узбекистан", "Азербайджан", "Армения", "Кыргызстан"]
 
 
 #  Утилиты 
@@ -615,76 +616,85 @@ DEFAULT_COLS = {
 }
 
 
+# Для каждого процентного поля — от какого поля считается (числитель, знаменатель)
+PCT_SOURCE = {
+    "delivered_pct": ("delivered",    "sent"),
+    "opened_pct":    ("opened",       "delivered"),
+    "ctr_pct":       ("ctr_unique",   "delivered"),
+    "clicks_pct":    ("clicks_total", "delivered"),
+    "unsub_pct":     ("unsub",        "delivered"),
+    "spam_pct":      ("spam",         "delivered"),
+}
+
+
 def write_stats(sheet, row_num, stats, weekday, cols=None):
-    """Записывает статистику. cols — словарь {ключ: буква_столбца}."""
-    r  = row_num
-    c  = {**DEFAULT_COLS, **(cols or {})}
+    """Записывает статистику. cols — словарь {ключ: буква_столбца}.
+    Пустая буква (или отсутствие ключа) значит "не записывать это поле" —
+    так можно отключить отдельные метрики для конкретного аккаунта."""
+    r = row_num
+    c = {**DEFAULT_COLS, **(cols or {})}
 
-    cG = c["sent"];        cH = c["delivered"];    cI = c["delivered_pct"]
-    cJ = c["opened"];      cK = c["opened_pct"]
-    cL = c["ctr_unique"];  cM = c["ctr_pct"]
-    cN = c["clicks_total"]; cO = c["clicks_pct"]
-    cP = c["unsub"];       cQ = c["unsub_pct"]
-    cR = c["spam"];        cS = c["spam_pct"]
-    cT = c["undelivered"]
-    cU = c["desktop"];     cV = c["tablet"];       cW = c["mobile"]
-    cX = c["weekday"];     cY = c["time"]
-
-    def div(a, b):
-        return f"={a}{r}/{b}{r}"
+    def letter(key):
+        val = (c.get(key) or "").strip().upper()
+        return val or None
 
     def v(key):
         val = stats.get(key, "")
         return val if isinstance(val, int) else ""
 
-    updates = [
-        {"range": f"{cG}{r}", "values": [[v("sent")        ]]},
-        {"range": f"{cH}{r}", "values": [[v("delivered")   ]]},
-        {"range": f"{cI}{r}", "values": [[div(cH, cG)      ]]},
-        {"range": f"{cJ}{r}", "values": [[v("opened")      ]]},
-        {"range": f"{cK}{r}", "values": [[div(cJ, cH)      ]]},
-        {"range": f"{cL}{r}", "values": [[v("ctr_unique")  ]]},
-        {"range": f"{cM}{r}", "values": [[div(cL, cH)      ]]},
-        {"range": f"{cN}{r}", "values": [[v("clicks_total")]]},
-        {"range": f"{cO}{r}", "values": [[div(cN, cH)      ]]},
-        {"range": f"{cP}{r}", "values": [[v("unsub")       ]]},
-        {"range": f"{cQ}{r}", "values": [[div(cP, cH)      ]]},
-        {"range": f"{cR}{r}", "values": [[v("spam")        ]]},
-        {"range": f"{cS}{r}", "values": [[div(cR, cH)      ]]},
-        {"range": f"{cT}{r}", "values": [[v("undelivered") ]]},
-        {"range": f"{cU}{r}", "values": [[v("desktop")     ]]},
-        {"range": f"{cV}{r}", "values": [[v("tablet")      ]]},
-        {"range": f"{cW}{r}", "values": [[v("mobile")      ]]},
-        {"range": f"{cX}{r}", "values": [[weekday           ]]},
-        {"range": f"{cY}{r}", "values": [["10:00"           ]]},
-    ]
-    sheet.batch_update(updates, value_input_option="USER_ENTERED")
+    updates = []
+    pct_cols_to_format = []
+
+    for key in ("sent", "delivered", "opened", "ctr_unique", "clicks_total",
+                "unsub", "spam", "undelivered", "desktop", "tablet", "mobile"):
+        col = letter(key)
+        if col:
+            updates.append({"range": f"{col}{r}", "values": [[v(key)]]})
+
+    for pct_key, (num_key, den_key) in PCT_SOURCE.items():
+        pct_col = letter(pct_key)
+        num_col = letter(num_key)
+        den_col = letter(den_key)
+        if pct_col and num_col and den_col:
+            updates.append({"range": f"{pct_col}{r}", "values": [[f"={num_col}{r}/{den_col}{r}"]]})
+            pct_cols_to_format.append(pct_col)
+
+    wd_col = letter("weekday")
+    if wd_col:
+        updates.append({"range": f"{wd_col}{r}", "values": [[weekday]]})
+    time_col = letter("time")
+    if time_col:
+        updates.append({"range": f"{time_col}{r}", "values": [["10:00"]]})
+
+    if updates:
+        sheet.batch_update(updates, value_input_option="USER_ENTERED")
 
     # Форматируем столбцы с процентами
-    try:
-        requests = []
-        for pct_col in [cI, cK, cM, cO, cQ, cS]:
-            col_idx = ord(pct_col) - ord("A")
-            requests.append({
-                "repeatCell": {
-                    "range": {
-                        "sheetId": sheet.id,
-                        "startRowIndex":    r - 1,
-                        "endRowIndex":      r,
-                        "startColumnIndex": col_idx,
-                        "endColumnIndex":   col_idx + 1,
-                    },
-                    "cell": {
-                        "userEnteredFormat": {
-                            "numberFormat": {"type": "PERCENT", "pattern": "0.00%"}
-                        }
-                    },
-                    "fields": "userEnteredFormat.numberFormat"
-                }
-            })
-        sheet.spreadsheet.batch_update({"requests": requests})
-    except:
-        pass
+    if pct_cols_to_format:
+        try:
+            requests = []
+            for pct_col in pct_cols_to_format:
+                col_idx = ord(pct_col) - ord("A")
+                requests.append({
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet.id,
+                            "startRowIndex":    r - 1,
+                            "endRowIndex":      r,
+                            "startColumnIndex": col_idx,
+                            "endColumnIndex":   col_idx + 1,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {"type": "PERCENT", "pattern": "0.00%"}
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat"
+                    }
+                })
+            sheet.spreadsheet.batch_update({"requests": requests})
+        except:
+            pass
 
 
 #  Главный генератор 
@@ -705,7 +715,12 @@ def run_parser(account):
     if cols is None and "start_col" in account:
         sc = account["start_col"]
         cols = {k: chr(ord(sc) + i) for i, k in enumerate(DEFAULT_COLS.keys())}
-    g_col = (cols or DEFAULT_COLS).get("sent", "G")
+    g_col = ((cols or DEFAULT_COLS).get("sent") or "").strip().upper()
+    if not g_col:
+        yield ("Столбец 'Отправлено' не может быть пустым — по нему скрипт "
+               "определяет, какие строки уже заполнены. Задайте букву столбца "
+               "для этого поля в настройках аккаунта.")
+        return
 
     proxy = _setup_proxy()
 
