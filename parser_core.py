@@ -420,21 +420,15 @@ def login(driver, email, password):
             ))
             break
         except Exception:
-            yield f"   Текущий URL: {driver.current_url}"
-            yield f"   Заголовок страницы: {driver.title!r}"
-            yield f"   Начало HTML: {driver.page_source[:500]!r}"
-            try:
-                logs = driver.get_log("browser")
-                for entry in logs[:20]:
-                    yield f"   [console] {entry.get('level')}: {entry.get('message')}"
-            except Exception as log_err:
-                yield f"   (лог консоли недоступен: {log_err})"
             if reload_attempt == 1:
+                # Показываем подробности только если и вторая попытка не помогла
+                yield f"   Не удалось открыть страницу входа. URL: {driver.current_url}"
+                yield f"   Заголовок страницы: {driver.title!r}"
                 raise
             # Первая загрузка часто не укладывается в 5с таймаут монтирования
             # SPA из-за задержек прокси; при перезагрузке ассеты уже в кэше
             # браузера и монтирование обычно укладывается в таймаут.
-            yield "   Перезагружаю страницу входа (кэш уже тёплый)..."
+            yield "   Страница не загрузилась с первого раза, пробую ещё раз..."
             driver.get("https://app.unisender.com/ru/v5/spa/login")
     assert ef is not None
     ef.clear()
@@ -559,9 +553,7 @@ def get_all_campaigns(driver):
         except:
             break
 
-    yield f"   Всего собрано пар (тема, сегмент): {len(result)}"
-    for (subj, seg) in list(result.keys())[:25]:
-        yield f"      найдено: {subj[:55]!r} | {seg!r}"
+    yield f"   Кампаний в Unisender найдено: {len(result)}"
 
     yield {"result": result}
 
@@ -800,7 +792,6 @@ def run_parser(account):
     yield f"Найдено строк для заполнения: {len(pending)}"
     for p in pending:
         yield f"   [{p['row_num']}] {p['date']} | {p['segment']:<12} | {p['subject'][:45]}"
-        yield f"        точный текст: {p['subject'][:55]!r} | {p['segment']!r}"
 
     # Убиваем зависшие chrome/chromedriver от предыдущих неудачных запусков —
     # на маленьком контейнере Streamlit Cloud они копятся и съедают память,
@@ -847,6 +838,7 @@ def run_parser(account):
 
     filled    = 0
     not_found = []
+    results   = []  # (row_num, segment, ok: bool, note: str)
 
     try:
         yield "\nЗагружаю список рассылок из Unisender..."
@@ -856,7 +848,6 @@ def run_parser(account):
                 campaigns = msg["result"]
             else:
                 yield msg
-        yield f"   Найдено кампаний: {len(campaigns)}"
 
         for item in pending:
             subject  = item["subject"]
@@ -870,6 +861,7 @@ def run_parser(account):
             if not url:
                 yield f"[{row_num}] НЕ НАЙДЕНО: '{subject[:45]}' | {segment}"
                 not_found.append(f"{subject[:45]} | {segment}")
+                results.append((row_num, segment, False, "рассылка не найдена в Unisender"))
                 continue
 
             yield f"\n[{row_num}] {subject[:45]} | {segment}"
@@ -891,6 +883,10 @@ def run_parser(account):
             write_stats(sheet, row_num, stats, weekday, cols)
             yield f"   Записано в строку {row_num}"
             filled += 1
+            if stats.get("sent"):
+                results.append((row_num, segment, True, ""))
+            else:
+                results.append((row_num, segment, False, "не удалось прочитать статистику"))
             time.sleep(2)
 
     except RuntimeError as e:
@@ -903,11 +899,16 @@ def run_parser(account):
         driver.quit()
         yield "\nБраузер закрыт"
 
+    ok_count  = sum(1 for _, _, ok, _ in results if ok)
+    bad_count = len(results) - ok_count
+
     yield f"\n{'='*50}"
-    yield f"Заполнено строк: {filled}"
-    if not_found:
-        yield f"Не найдено в Unisender ({len(not_found)}):"
-        for nf in not_found:
-            yield f"   - {nf}"
+    yield f"ИТОГ: успешно {ok_count} из {len(results)}"
+    for row_num, segment, ok, note in results:
+        mark = "✓" if ok else "✗"
+        suffix = f" — {note}" if note else ""
+        yield f"   {mark} [{row_num}] {segment}{suffix}"
+    if bad_count == 0 and results:
+        yield "Все строки заполнены успешно."
 
 
