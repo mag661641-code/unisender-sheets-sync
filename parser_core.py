@@ -278,21 +278,19 @@ def parse_stat_lines(page_text):
 
 
 def parse_device_lines(page_text):
-    lines = [l.strip() for l in page_text.split("\n")]
+    lines = [l.strip() for l in page_text.split("\n") if l.strip()]
 
     def get_value(label_pattern):
         for i, line in enumerate(lines):
             if not re.search(label_pattern, line, re.IGNORECASE):
                 continue
-            if i >= 2:
-                mid  = lines[i - 1]
-                cand = lines[i - 2]
-                if re.search(r"\d+[.,]?\d*\s*%", mid) and re.search(r"^\d", cand):
-                    return cand
-            if i >= 1:
-                cand = lines[i - 1]
-                if re.search(r"^\d", cand):
-                    return cand
+            # Верстка карточек устройств не всегда даёт строгий порядок
+            # "число -> процент -> подпись" — ищем чистое число (без %)
+            # в небольшом окне вокруг подписи в обе стороны.
+            for offset in (-1, -2, 1, 2, -3, 3):
+                j = i + offset
+                if 0 <= j < len(lines) and re.fullmatch(r"\d[\d ]*", lines[j]):
+                    return lines[j]
         return ""
 
     return {
@@ -585,6 +583,7 @@ def parse_campaign_page(driver, url, subject):
 
     text  = driver.find_element(By.TAG_NAME, "body").text
     stats = parse_stat_lines(text)
+    stats["_review_text"] = text[:1200]
 
     # Если сошлось "доставлено < отправлено" (то есть недоставленные
     # реально есть), а блок ещё не подгрузился и дал 0 — ждём ещё и
@@ -597,6 +596,7 @@ def parse_campaign_page(driver, url, subject):
         time.sleep(3)
         text  = driver.find_element(By.TAG_NAME, "body").text
         stats = parse_stat_lines(text)
+        stats["_review_text"] = text[:1200]
 
     # Вкладка "Поведение получателей" (?tab=behavior)
     driver.get(url + "?tab=behavior")
@@ -867,6 +867,10 @@ def run_parser(account):
             yield (f"   отпр={stats['sent']}, дост={stats['delivered']}, "
                    f"прочит={stats['opened']}, клики={stats['ctr_unique']}/{stats['clicks_total']}, "
                    f"дскт={stats.get('desktop')}, план={stats.get('tablet')}, моб={stats.get('mobile')}")
+
+            if not stats.get("sent"):
+                yield f"   Диагностика (текст страницы 'Обзор'): {stats.get('_review_text', '')!r}"
+            stats.pop("_review_text", None)
 
             warnings = validate_stats(stats)
             for w in warnings:
