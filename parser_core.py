@@ -592,11 +592,22 @@ def parse_campaign_page(driver, url, subject):
                  " or contains(text(),'мобильный') or contains(text(),'Мобильный')]")
             )
         )
+        # Подписи ("десктоп"/"мобильный") появляются раньше самих цифр —
+        # цифры подгружаются отдельно диаграммой, и для больших рассылок
+        # это занимает заметно больше времени. Даём им время подгрузиться.
+        time.sleep(2)
     except:
-        time.sleep(4)
+        time.sleep(5)
 
     t2 = driver.find_element(By.TAG_NAME, "body").text
     stats.update(parse_device_lines(t2))
+
+    # Если после паузы цифры так и не появились (очень большая рассылка,
+    # диаграмма ещё рендерится) — пробуем ещё раз чуть подождать.
+    if stats.get("desktop") == "" and stats.get("tablet") == "" and stats.get("mobile") == "":
+        time.sleep(3)
+        t2 = driver.find_element(By.TAG_NAME, "body").text
+        stats.update(parse_device_lines(t2))
 
     return stats
 
