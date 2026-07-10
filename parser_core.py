@@ -567,23 +567,35 @@ def get_all_campaigns(driver):
 
 
 def parse_campaign_page(driver, url, subject):
-    driver.get(url + "?tab=review")
-    try:
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located(
-                (By.XPATH, "//*[contains(text(),'отправлено') or contains(text(),'Отправлено')]")
+    max_load_attempts = 4
+    for load_attempt in range(max_load_attempts):
+        driver.get(url + "?tab=review")
+        try:
+            WebDriverWait(driver, 15).until(
+                EC.presence_of_element_located(
+                    (By.XPATH, "//*[contains(text(),'отправлено') or contains(text(),'Отправлено')]")
+                )
             )
-        )
-        # Блок "N недоставленных" на этой же вкладке подгружается отдельным
-        # запросом и для больших рассылок появляется позже основных цифр
-        # (отправлено/доставлено/прочитано). Даём ему время подгрузиться.
-        time.sleep(2)
-    except:
-        time.sleep(5)
+            # Блок "N недоставленных" на этой же вкладке подгружается отдельным
+            # запросом и для больших рассылок появляется позже основных цифр
+            # (отправлено/доставлено/прочитано). Даём ему время подгрузиться.
+            time.sleep(2)
+        except:
+            time.sleep(5)
 
-    text  = driver.find_element(By.TAG_NAME, "body").text
-    stats = parse_stat_lines(text)
-    stats["_review_text"] = text[:1200]
+        text  = driver.find_element(By.TAG_NAME, "body").text
+        stats = parse_stat_lines(text)
+        stats["_review_text"] = text[:1200]
+
+        # Иногда страница кампании вообще не открывается (доезжает только
+        # левое меню, без самой карточки статистики, или вообще пусто) —
+        # тогда "отправлено" не найдётся вовсе. Это похоже на разрыв
+        # соединения через прокси при быстрой последовательной загрузке
+        # страниц, поэтому пробуем перезагрузить несколько раз с паузой.
+        if stats.get("sent") != "":
+            break
+        if load_attempt < max_load_attempts - 1:
+            time.sleep(3 * (load_attempt + 1))
 
     # Если сошлось "доставлено < отправлено" (то есть недоставленные
     # реально есть), а блок ещё не подгрузился и дал 0 — ждём ещё и
@@ -879,7 +891,7 @@ def run_parser(account):
             write_stats(sheet, row_num, stats, weekday, cols)
             yield f"   Записано в строку {row_num}"
             filled += 1
-            time.sleep(1)
+            time.sleep(2)
 
     except RuntimeError as e:
         yield f"Прерван: {e}"
