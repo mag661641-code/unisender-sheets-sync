@@ -1,0 +1,35 @@
+name: Scheduled Unisender sync
+
+on:
+  schedule:
+    # 07:00 UTC = 10:00 МСК. Рассылка отправляется во вторник, запускаем
+    # в пятницу утром, чтобы письма точно успели дойти.
+    - cron: "0 7 * * 5"
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Write Google credentials
+        env:
+          GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
+        run: echo "$GOOGLE_CREDENTIALS_JSON" > credentials.json
+
+      - name: Run parser for all accounts
+        env:
+          ACCOUNTS_JSON: ${{ secrets.ACCOUNTS_JSON }}
+        run: python run_scheduled.py
