@@ -576,11 +576,27 @@ def parse_campaign_page(driver, url, subject):
                 (By.XPATH, "//*[contains(text(),'отправлено') or contains(text(),'Отправлено')]")
             )
         )
+        # Блок "N недоставленных" на этой же вкладке подгружается отдельным
+        # запросом и для больших рассылок появляется позже основных цифр
+        # (отправлено/доставлено/прочитано). Даём ему время подгрузиться.
+        time.sleep(2)
     except:
         time.sleep(5)
 
     text  = driver.find_element(By.TAG_NAME, "body").text
     stats = parse_stat_lines(text)
+
+    # Если сошлось "доставлено < отправлено" (то есть недоставленные
+    # реально есть), а блок ещё не подгрузился и дал 0 — ждём ещё и
+    # перечитываем страницу.
+    sent_val      = stats.get("sent")
+    delivered_val = stats.get("delivered")
+    sent_n      = sent_val if isinstance(sent_val, int) else 0
+    delivered_n = delivered_val if isinstance(delivered_val, int) else 0
+    if sent_n and delivered_n and sent_n > delivered_n and not stats.get("undelivered"):
+        time.sleep(3)
+        text  = driver.find_element(By.TAG_NAME, "body").text
+        stats = parse_stat_lines(text)
 
     # Вкладка "Поведение получателей" (?tab=behavior)
     driver.get(url + "?tab=behavior")
